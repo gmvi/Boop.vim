@@ -1,33 +1,129 @@
 
 " You may prefer a different value than -3 below
-function! ListBoopScripts()
-    !echo; boop -l | pr -3 -t
-endfunction
+if has('unix') || has('osxunix')
+    command! ListBoopScripts !echo; boop -l | pr -3 -t
+elseif has('win32')
+    command! ListBoopScripts !echo.& boop -l
+endif
 
 " Required for refocusing the scratch pad
 set switchbuf +=useopen
 
-function! BoopPad(mods)
+function! s:BoopPad(mods) abort
     try
-        try
-            exec a:mods "sbuffer \\[Boop]"
-        catch
-            exec a:mods "new +file \\[Boop]"
-        endtry
-        setlocal nobuflisted buftype=nofile bufhidden=delete noswapfile
+        exec a:mods "sbuffer \\[Boop]"
+    catch
+        exec a:mods "new +file \\[Boop]"
     endtry
-
-    " add a convenience mapping for <c-b> in the [Boop] buffer
-    " TODO: make this a user-defined event
-    "nnoremap <buffer> <c-b> ggVG:Boop 
+    setlocal nobuflisted buftype=nofile bufhidden=hide noswapfile
 endfunction
-command! BoopPad call BoopPad(<q-mods>)
 
-" Make a simple command wrapper around !boop with autocompletion
-function! BoopCompletion(ArgLead, CmdLine, CursorPos)
+function! s:BoopPadSelection(mods) abort
+    " defensive programming; register should be a single-char string
+    let l:boop_reg = s:boopRegister[0]
+    " remember the user's old register contents
+    let l:reg_old = getreg(l:boop_reg)
+    try
+        silent exec "'<,'>yank" l:boop_reg
+        BoopPad
+        %delete _
+        exec "normal" "V\"".l:boop_reg."p"
+    endtry
+    call setreg(l:boop_reg, l:reg_old)
+endfunction
+
+
+function! s:BoopCompletion(ArgLead, CmdLine, CursorPos)
     return system("boop -l")
 endfunction
-command! -range -nargs=1 -complete=custom,BoopCompletion Boop '<,'>!boop <f-args>
+
+let s:boopRegister = 'x'
+function! s:DoRegisterBoop(args) abort
+    " defensive programming; register should be a single-char string
+    let l:boop_reg = s:boopRegister[0]
+    " the `, 1, 1` below is to not translate NULs to newlines
+    let l:selection = getreg(l:boop_reg, 1, 1)
+    let l:cmd_list = ['boop', shellescape(a:args)]
+    if has('unix') || has ('macosunix')
+        let l:cmd_list = l:cmd_list + ['2>/dev/null']
+    elseif has('win32')
+        let l:cmd_list = l:cmd_list + ['2>NUL']
+    else
+        throw "unsupported platform"
+    endif
+    let l:output = system(join(l:cmd_list), l:selection)
+    if v:shell_error == 0
+        call setreg(boop_reg, l:output)
+    else
+        " run the command again and capture stderr instead of stdout
+        let l:cmd_list = l:cmd_list[:-2] + ["1".(l:cmd_list[-1][1:])]
+        let l:output = system(join(l:cmd_list), l:selection)
+        echohl ErrorMsg
+        if v:shell_error == 0
+            echom "Boop.vim encountered a fatal error"
+        else
+            echom "Boop returned the following error:"
+            echom trim(l:output)
+        endif
+        echohl None
+    endif
+endfunction
+
+" Boops the entire buffer
+function! s:BoopBuffer(args) abort
+    " defensive programming; register should be a single-char string
+    let l:boop_reg = s:boopRegister[0]
+    " remember the user's old register contents
+    let l:reg_old = getreg(l:boop_reg)
+    try
+        silent exec "%yank" l:boop_reg
+        call s:DoRegisterBoop(a:args)
+        silent exec "normal" "gg\"_dG\"".l:boop_reg."P"
+    endtry
+    call setreg(l:boop_reg, l:reg_old)
+endfunction
+
+" Boops the current line. Does not affect the recent selection (gv)
+function! s:BoopLine(args) abort
+    " defensive programming; register should be a single-char string
+    let l:boop_reg = s:boopRegister[0]
+    " remember the user's old register contents
+    let l:reg_old = getreg(l:boop_reg)
+    try
+        silent exec "yank" l:boop_reg
+        call s:DoRegisterBoop(a:args)
+        " do a `substitute` instead of some normal dd/P command, cause it
+        " wasn't working for me.
+        let l:search_reg = getreg('/')
+        silent exec "substitute" "/.*/\\=@".l:boop_reg."/"
+        call setreg('/', l:search_reg)
+    endtry
+    call setreg(l:boop_reg, l:reg_old)
+endfunction
+
+" Boops the most recent selection (i.e. the current selection if triggered
+" from visual mode)
+" TODO: bugfix: `vap:boop [script]<cr>` removes a newline
+function! s:BoopSelection(args) abort
+    " defensive programming; register should be a single-char string
+    let l:boop_reg = s:boopRegister[0]
+    " remember the user's old register contents
+    let l:reg_old = getreg(l:boop_reg)
+    try
+        silent exec "normal" "gv\"".l:boop_reg."y"
+        call s:DoRegisterBoop(a:args)
+        silent exec "normal" "gv\"".l:boop_reg."p"
+    endtry
+    call setreg(l:boop_reg, l:reg_old)
+endfunction
+
+command! BoopPad call s:BoopPad(<q-mods>)
+command! -range BoopPadSelection call s:BoopPadSelection(<q-mods>)
+command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer call s:BoopBuffer(<q-args>)
+command! -nargs=* -complete=custom,s:BoopCompletion BoopLine call s:BoopLine(<q-args>)
+command! -nargs=* -complete=custom,s:BoopCompletion -range BoopSelection call s:BoopSelection(<q-args>)
+
+
 
 "
 " From normal mode, press <ctrl-b> to open or focus the boop scratch pad.
@@ -38,11 +134,9 @@ command! -range -nargs=1 -complete=custom,BoopCompletion Boop '<,'>!boop <f-args
 nnoremap <c-b> :BoopPad<cr>
 " If you'd rather open the boop pad vertically, add the vertical modifier
 "nnoremap <c-b> :vertical BoopPad<cr>
+xnoremap <c-b> :BoopPadSelection<cr>
 
-nnoremap <c-l> :call ListBoopScripts()<cr>
-
-" Use the `:Boop [script name]` command to Boop some line-wise selected text
-" Note that you can't run a command on char-wise or block-wise selections
+cnoreabbrev boop BoopSelection
 
 " remap keys within the boop pad
 augroup boop_mapping
@@ -51,5 +145,7 @@ augroup boop_mapping
 augroup END
 
 function! s:BoopMapping()
-    nnoremap <buffer> <c-b> ggVG:Boop<space>
+    nnoremap <buffer> <c-b> :Boop<space>
+    xnoremap <buffer> <c-b> :BoopSelection<space>
+    nnoremap <buffer> <c-l> :ListBoopScripts<cr>
 endfunction
