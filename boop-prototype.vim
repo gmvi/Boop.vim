@@ -1,11 +1,5 @@
 
-" You may prefer a different value than -3 below
-if has('unix') || has('osxunix')
-    command! ListBoopScripts !echo; boop -l | pr -3 -t
-elseif has('win32')
-    command! ListBoopScripts !echo.& boop -l
-endif
-
+""" The boop pad
 " Required for refocusing the scratch pad
 set switchbuf +=useopen
 
@@ -17,6 +11,7 @@ function! s:BoopPad(mods) abort
     endtry
     setlocal nobuflisted buftype=nofile bufhidden=hide noswapfile
 endfunction
+command! BoopPad call s:BoopPad(<q-mods>)
 
 function! s:BoopPadSelection(mods) abort
     " defensive programming; register should be a single-char string
@@ -27,12 +22,23 @@ function! s:BoopPadSelection(mods) abort
         silent exec "'<,'>yank" l:boop_reg
         BoopPad
         %delete _
-        exec "normal" "V\"".l:boop_reg."p"
+        exec "normal" "V\""..l:boop_reg.."p"
     endtry
     call setreg(l:boop_reg, l:reg_old)
 endfunction
+command! -range BoopPadSelection call s:BoopPadSelection(<q-mods>)
 
 
+""" Display all scripts
+" You may prefer a different value than -3 below
+if has('unix') || has('osxunix')
+    command! ListBoopScripts !echo; boop -l | pr -3 -t
+elseif has('win32')
+    command! ListBoopScripts !echo.& boop -l
+endif
+
+
+""" Do the booping
 function! s:BoopCompletion(ArgLead, CmdLine, CursorPos)
     return system("boop -l")
 endfunction
@@ -56,7 +62,7 @@ function! s:DoRegisterBoop(args) abort
         call setreg(boop_reg, l:output)
     else
         " run the command again and capture stderr instead of stdout
-        let l:cmd_list = l:cmd_list[:-2] + ["1".(l:cmd_list[-1][1:])]
+        let l:cmd_list = l:cmd_list[:-2] + ["1"..(l:cmd_list[-1][1:])]
         let l:output = system(join(l:cmd_list), l:selection)
         echohl ErrorMsg
         if v:shell_error == 0
@@ -78,10 +84,11 @@ function! s:BoopBuffer(args) abort
     try
         silent exec "%yank" l:boop_reg
         call s:DoRegisterBoop(a:args)
-        silent exec "normal" "gg\"_dG\"".l:boop_reg."P"
+        silent exec "normal" "gg\"_dG\""..l:boop_reg.."P"
     endtry
     call setreg(l:boop_reg, l:reg_old)
 endfunction
+command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer call s:BoopBuffer(<q-args>)
 
 " Boops the current line. Does not affect the recent selection (gv)
 function! s:BoopLine(args) abort
@@ -95,11 +102,12 @@ function! s:BoopLine(args) abort
         " do a `substitute` instead of some normal dd/P command, cause it
         " wasn't working for me.
         let l:search_reg = getreg('/')
-        silent exec "substitute" "/.*/\\=@".l:boop_reg."/"
+        silent exec "substitute" "/.*/\\=@"..l:boop_reg.."/"
         call setreg('/', l:search_reg)
     endtry
     call setreg(l:boop_reg, l:reg_old)
 endfunction
+command! -nargs=* -complete=custom,s:BoopCompletion BoopLine call s:BoopLine(<q-args>)
 
 " Boops the most recent selection (i.e. the current selection if triggered
 " from visual mode)
@@ -110,42 +118,11 @@ function! s:BoopSelection(args) abort
     " remember the user's old register contents
     let l:reg_old = getreg(l:boop_reg)
     try
-        silent exec "normal" "gv\"".l:boop_reg."y"
+        silent exec "normal" "gv\""..l:boop_reg.."y"
         call s:DoRegisterBoop(a:args)
-        silent exec "normal" "gv\"".l:boop_reg."p"
+        silent exec "normal" "gv\""..l:boop_reg.."p"
     endtry
     call setreg(l:boop_reg, l:reg_old)
 endfunction
+command! -nargs=* -complete=custom,s:BoopCompletion -range Boop call s:BoopSelection(<q-args>)
 
-command! BoopPad call s:BoopPad(<q-mods>)
-command! -range BoopPadSelection call s:BoopPadSelection(<q-mods>)
-command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer call s:BoopBuffer(<q-args>)
-command! -nargs=* -complete=custom,s:BoopCompletion BoopLine call s:BoopLine(<q-args>)
-command! -nargs=* -complete=custom,s:BoopCompletion -range BoopSelection call s:BoopSelection(<q-args>)
-
-
-
-"
-" From normal mode, press <ctrl-b> to open or focus the boop scratch pad.
-" Within the scratch pad, press <ctrl-b> to run a script over the whole pad.
-" Press <ctrl-l> to see all boop scripts.
-
-" The boop pad is a scratch pad emulating some of the Boop app
-nnoremap <c-b> :BoopPad<cr>
-" If you'd rather open the boop pad vertically, add the vertical modifier
-"nnoremap <c-b> :vertical BoopPad<cr>
-xnoremap <c-b> :BoopPadSelection<cr>
-
-cnoreabbrev boop BoopSelection
-
-" remap keys within the boop pad
-augroup boop_mapping
-    autocmd!
-    autocmd BufEnter,BufFilePost \[Boop] call s:BoopMapping()
-augroup END
-
-function! s:BoopMapping()
-    nnoremap <buffer> <c-b> :Boop<space>
-    xnoremap <buffer> <c-b> :BoopSelection<space>
-    nnoremap <buffer> <c-l> :ListBoopScripts<cr>
-endfunction

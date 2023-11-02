@@ -10,8 +10,8 @@ pub(crate) struct Cli {
     #[clap(long, short='l')]
     pub list_scripts: bool,
 
-    #[clap(long, short='D')]
-    pub daemon: bool,
+    //#[clap(long, short='D')]
+    //pub daemon: bool,
 
     #[clap(multiple_values=true)]
     pub script_name: Vec<String>,
