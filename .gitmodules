@@ -1,0 +1,3 @@
+[submodule "Boop-GTK"]
+	path = submodules/Boop-GTK-fork
+	url = https://github.com/gmvi/Boop-GTK
