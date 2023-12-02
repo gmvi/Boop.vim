@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.files.excludeDirs": [
+        "submodules/"
+    ],
+    "files.watcherExclude": {
+        "submodules/": true
+    }
+}

@@ -1,18 +1,22 @@
 # Boop.vim
+> [!IMPORTANT]
+> This is a prototype. It hasn't been tested on OSX or Windows yet.
 
 ## Installing
-Haven't looked at Vim package managers or prebuilt binaries yet. You'll have to build from source.
+I haven't looked at (Neo)vim package managers or prebuilt binaries yet. You'll have to build from source.
 
 ## Building from source
 
 ### Requirements
-Linux, Rust. 
+Linux and Rust.
 
 1. Clone this repo
 2. Clone all the submodules: `git submodule update --init --recursive`
 3. Install the boop binary: `cargo install --path .`
-4. Source the vim file from your .vimrc: `source 'boop-prototype.vim'`
-5. Add bindings to your .vimrc:
+4. Ensure the boop binary is in your path: `echo "asdf" | boop Rot13`
+5. (optional) Install the bash completion script into your .bashrc: `source boop-completion.bash`
+6. Source the vim file from your .vimrc: `source 'boop-prototype.vim'`
+7. Add bindings to your .vimrc:
 ```
 "
 " The boop pad is a scratch pad emulating some of the Boop app
@@ -30,7 +34,7 @@ xnoremap <c-b> :Boop<space>
 " remap keys within the boop pad
 augroup boop_mapping
     autocmd!
-    autocmd BufEnter,BufFilePost \[Boop] call s:BoopMapping()
+    autocmd BufEnter,FileType boop call s:BoopMapping()
 augroup END
 
 function! s:BoopMapping()

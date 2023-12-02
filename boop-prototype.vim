@@ -1,32 +1,106 @@
+"if has('nvim-0.6') || has('job')
+"    let s:boop_engine_interface = 'job'
+"else
+"    let s:boop_engine_interface = 'system'
+"endif
+if has('nvim-0.5')
+    let s:boop_pad_ui = 'floating'
+else
+    let s:boop_pad_ui = 'scratch'
+endif
+"if has('nvim-0.5')
+"    let s:boop_palette = 'floating'
+"elseif v:version >= 802
+"    let s:boop_palette = 'popup'
+"else
+"    let s:boop_palette = 'none'
+"endif
+
+" Set values here for development testing
+let s:boop_engine_interface = 'system'
+"let s:boop_pad_ui = 'floating'
+let s:boop_palette = 'none'
 
 """ The boop pad
+let g:Boop = {
+    \ 'default_mappings': 1,
+\}
+if s:boop_engine_interface == 'system'
+    let s:boop_info_file = tempname()
+    let s:boop_error_file = tempname()
+    let s:boop_scratch_window = -1
+else " s:boop_engine_interface == 'job'
+    " json vs msgpack is determined by an if has('nvim')
+    throw "s:boop_engine_interface == 'job' not implemented yet"
+endif
+
 " Required for refocusing the scratch pad
-set switchbuf +=useopen
+" TODO: implement use of window ID like in NERDTree/NERDTreeFocus
+let s:scratch_window = -1
+if s:boop_engine_interface == 'scratch'
+    set swtichbuf +=useopen
+endif
 
-function! s:BoopPad(mods) abort
-    try
-        exec a:mods "sbuffer \\[Boop]"
-    catch
-        exec a:mods "new +file \\[Boop]"
-    endtry
+fun! s:BoopPad(mods) abort
+    if s:boop_pad_ui == 'floating'
+        call s:OpenFloatingWindow()
+        try
+            b \[Boop]
+            return
+        catch
+            " new buffer, continue on to set local options and mappings
+        endtry
+    else " s:boop_pad_ui == 'scratch'
+        try
+            exec a:mods "sbuffer \\[Boop]"
+            return
+        catch
+            exec a:mods "new"
+            " new buffer, continue on to set local options and mappings
+        endtry
+    endif
+    file \[Boop]
     setlocal nobuflisted buftype=nofile bufhidden=hide noswapfile
-endfunction
-command! BoopPad call s:BoopPad(<q-mods>)
+    setlocal filetype=boop
+    if g:Boop.default_mappings
+        nnoremap <buffer> <c-b> :BoopBuffer<space>
+        xnoremap <buffer> <c-b> :Boop<space>
+    endif
+endfun
 
-function! s:BoopPadSelection(mods) abort
-    " defensive programming; register should be a single-char string
-    let l:boop_reg = s:boopRegister[0]
+fun! s:OpenFloatingWindow() abort
+    let ui = nvim_list_uis()[0]
+    let l:width = 100
+    let l:height = 25
+    let l:opts = {
+        \ 'relative': 'editor',
+        \ 'width': l:width,
+        \ 'height': l:height,
+        \ 'col': 10,
+        \ 'row': 5,
+        \ 'border': 'double',
+        \ 'title': '[Boop]',
+        \ }
+    let l:buf = nvim_create_buf(0, 1)
+    let l:win = nvim_open_win(l:buf, 0, opts)
+    call nvim_set_current_win(l:win)
+    augroup BoopFloat
+        autocmd! * <buffer>
+        autocmd WinLeave <buffer> call nvim_win_close(0, 1)
+    augroup END
+endfun
+
+fun! s:BoopPadSelection(mods) abort
     " remember the user's old register contents
-    let l:reg_old = getreg(l:boop_reg)
+    let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "'<,'>yank" l:boop_reg
+        silent exec "normal" "gv\""..s:boop_reg.."y"
         BoopPad
-        %delete _
-        exec "normal" "V\""..l:boop_reg.."p"
+        exec "normal" "ggVG\""..s:boop_reg.."p"
     endtry
-    call setreg(l:boop_reg, l:reg_old)
-endfunction
-command! -range BoopPadSelection call s:BoopPadSelection(<q-mods>)
+    call setreg(s:boop_reg, l:reg_old)
+endfun
+
 
 
 """ Display all scripts
@@ -39,90 +113,118 @@ endif
 
 
 """ Do the booping
-function! s:BoopCompletion(ArgLead, CmdLine, CursorPos)
+fun! s:BoopCompletion(ArgLead, CmdLine, CursorPos)
+    " TODO: implement this with the rpc interface, and do it correctly using the completion parameters
     return system("boop -l")
-endfunction
+endfun
 
-let s:boopRegister = 'x'
-function! s:DoRegisterBoop(args) abort
-    " defensive programming; register should be a single-char string
-    let l:boop_reg = s:boopRegister[0]
-    " the `, 1, 1` below is to not translate NULs to newlines
-    let l:selection = getreg(l:boop_reg, 1, 1)
-    let l:cmd_list = ['boop', shellescape(a:args)]
-    if has('unix') || has ('macosunix')
-        let l:cmd_list = l:cmd_list + ['2>/dev/null']
-    elseif has('win32')
-        let l:cmd_list = l:cmd_list + ['2>NUL']
-    else
-        throw "unsupported platform"
-    endif
-    let l:output = system(join(l:cmd_list), l:selection)
-    if v:shell_error == 0
-        call setreg(boop_reg, l:output)
-    else
-        " run the command again and capture stderr instead of stdout
-        let l:cmd_list = l:cmd_list[:-2] + ["1"..(l:cmd_list[-1][1:])]
-        let l:output = system(join(l:cmd_list), l:selection)
-        echohl ErrorMsg
-        if v:shell_error == 0
-            echom "Boop.vim encountered a fatal error"
+let s:boop_reg = 'x'
+fun! s:DoBoop(args) abort
+    " the `, 1, 1` below is to not translate NULs to newlines -- VimL is weird
+    let l:input = getreg(s:boop_reg, 1, 1)
+    if s:boop_engine_interface == "system"
+        let l:cmd_list = [
+            \ 'boop', '--info-file', s:boop_info_file, '--error-file', s:boop_error_file,
+            \ shellescape(a:args)
+            \ ]
+        if has('unix') || has('macosunix')
+            let l:cmd_list = l:cmd_list + ['2>/dev/null']
+        elseif has('win32')
+            let l:cmd_list = l:cmd_list + ['2>NUL']
         else
-            echom "Boop returned the following error:"
-            echom trim(l:output)
+            throw "boop.vim: unsupported platform"
         endif
-        echohl None
+        let l:output = system(join(l:cmd_list), l:input)
+        let l:info_output = readfile(s:boop_info_file)
+        let l:error_output = readfile(s:boop_error_file)
+        if len(l:error_output) > 0
+            echohl ErrorMsg
+            echom trim(join(l:error_output, "\n"))
+            echohl None
+        endif
+        if len(l:info_output) > 0
+            echohl MoreMsg
+            echom trim(join(l:info_output, "\n"))
+            echohl None
+        endif
+        " only output the result if script execution succeeded
+        if v:shell_error == 0
+            call setreg(s:boop_reg, l:output)
+        endif
+    else "s:boop_engine_interface == 'job'
+        throw "s:boop_engine_interface == 'job' not implemented yet"
     endif
-endfunction
+endfun
 
 " Boops the entire buffer
-function! s:BoopBuffer(args) abort
-    " defensive programming; register should be a single-char string
-    let l:boop_reg = s:boopRegister[0]
+fun! s:BoopBuffer(args) abort
+    let script = len(a:args) ? a:args : s:OpenBoopPalette()
     " remember the user's old register contents
-    let l:reg_old = getreg(l:boop_reg)
+    let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "%yank" l:boop_reg
-        call s:DoRegisterBoop(a:args)
-        silent exec "normal" "gg\"_dG\""..l:boop_reg.."P"
+        silent exec "%yank" s:boop_reg
+        call s:DoBoop(a:args)
+        silent exec "normal" "gg\"_dG\""..s:boop_reg.."P"
     endtry
-    call setreg(l:boop_reg, l:reg_old)
-endfunction
-command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer call s:BoopBuffer(<q-args>)
+    call setreg(s:boop_reg, l:reg_old)
+endfun
 
 " Boops the current line. Does not affect the recent selection (gv)
+" TODO: make this work linewise instead of just one single line
 function! s:BoopLine(args) abort
-    " defensive programming; register should be a single-char string
-    let l:boop_reg = s:boopRegister[0]
+    let script = len(a:args) ? a:args : s:OpenBoopPalette()
     " remember the user's old register contents
-    let l:reg_old = getreg(l:boop_reg)
+    let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "yank" l:boop_reg
-        call s:DoRegisterBoop(a:args)
+        silent exec "yank" s:boop_reg
+        call s:DoBoop(a:args)
         " do a `substitute` instead of some normal dd/P command, cause it
         " wasn't working for me.
         let l:search_reg = getreg('/')
-        silent exec "substitute" "/.*/\\=@"..l:boop_reg.."/"
+        silent exec "substitute" "/.*/\\=@"..s:boop_reg.."/"
         call setreg('/', l:search_reg)
     endtry
-    call setreg(l:boop_reg, l:reg_old)
+    call setreg(s:boop_reg, l:reg_old)
 endfunction
-command! -nargs=* -complete=custom,s:BoopCompletion BoopLine call s:BoopLine(<q-args>)
 
 " Boops the most recent selection (i.e. the current selection if triggered
 " from visual mode)
-" TODO: bugfix: `vap:boop [script]<cr>` removes a newline
+" TODO: bugfix: `vap:boop [script]<cr>` removes a trailing newline
 function! s:BoopSelection(args) abort
-    " defensive programming; register should be a single-char string
-    let l:boop_reg = s:boopRegister[0]
+    let script = len(a:args) ? a:args : s:OpenBoopPalette()
     " remember the user's old register contents
-    let l:reg_old = getreg(l:boop_reg)
+    let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "normal" "gv\""..l:boop_reg.."y"
-        call s:DoRegisterBoop(a:args)
-        silent exec "normal" "gv\""..l:boop_reg.."p"
+        silent exec "normal" "gv\""..s:boop_reg.."y"
+        call s:DoBoop(script)
+        silent exec "normal" "gv\""..s:boop_reg.."p"
     endtry
-    call setreg(l:boop_reg, l:reg_old)
+    call setreg(s:boop_reg, l:reg_old)
 endfunction
-command! -nargs=* -complete=custom,s:BoopCompletion -range Boop call s:BoopSelection(<q-args>)
 
+fun! s:OpenBoopPalette() abort
+    if s:boop_palette == 'floating'
+        throw "s:boop_palette == 'floating' not implemented yet"
+    elseif s:boop_palette == 'popup'
+        throw "s:boop_palette == 'popup' not implemented yet"
+    else " s:boop_palette == 'none'
+        throw "Boop.vim: s:OpenBoopPalette() called with s:boop_palette == 'none'"
+    endif
+endfun
+
+if s:boop_palette == 'none'
+    " If you invoke Boop with no arguments in oldvim, have it press tab for you
+    command! -nargs=* -complete=custom,s:BoopCompletion -range Boop 
+        \ eval <q-args>=="" ? feedkeys(":Boop \<Tab>", 't') : s:BoopSelection(<q-args>)
+    command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer
+        \ eval <q-args>=="" ? feedkeys(":BoopBuffer \<Tab>", 't') : s:BoopBuffer(<q-args>)
+    "command! -nargs=* -complete=custom,s:BoopCompletion BoopLine
+    "    \ eval <q-args>=="" ? feedkeys(":BoopLine \<Tab>", 't') : s:BoopLine(<q-args>)
+else
+    command! -nargs=* -complete=custom,s:BoopCompletion -range Boop call s:BoopSelection(<q-args>)
+    command! -nargs=* -complete=custom,s:BoopCompletion BoopBuffer call s:BoopBuffer(<q-args>)
+    "command! -nargs=* -complete=custom,s:BoopCompletion BoopLine call s:BoopLine(<q-args>)
+endif
+
+command! BoopPad call s:BoopPad(<q-mods>)
+command! -range BoopPadSelection call s:BoopPadSelection(<q-mods>)

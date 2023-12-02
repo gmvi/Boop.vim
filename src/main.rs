@@ -1,78 +1,87 @@
 #![forbid(unsafe_code)]
 
-#[macro_use]
-extern crate lazy_static;
+extern crate boop;
+extern crate clap;
 extern crate eyre;
 extern crate fs_extra;
 
 mod cli;
-//mod daemon;
 
+use boop::executor::TextReplacement;
+use boop::script;
+use boop::scriptmap::ScriptMap;
+use boop::util;
 use cli::Cli;
-//use daemon::start_daemon_mode;
 
-use eyre::{Result, WrapErr};
-use clap::Parser;
-use boop_gtk_fork::{
-    executor,
-    script,
-    scriptmap
+use eyre::{
+    Result,
+    Error,
 };
+use clap::Parser;
+use std::io::{
+    Write, Seek, SeekFrom,
+};
+use std::fs::File;
 
-lazy_static! {
-    static ref XDG_DIRS: xdg::BaseDirectories = match xdg::BaseDirectories::with_prefix("boop-gtk")
-    {
-        Ok(dirs) => dirs,
-        Err(err) => panic!("Unable to find XDG directorys: {}", err),
-    };
+fn open_output_file(path: String) -> Result<File> {
+    if path == "" {
+        return Err(Error::msg("path is empty"));
+    }
+    let mut output_file = match File::open(path.clone()) {
+        Ok(file) => Ok(file),
+        // try to create the file
+        Err(_) => File::create(path.clone()),
+    }?;
+    // try to truncate the file 
+    output_file.set_len(0)?;
+    output_file.seek(SeekFrom::End(0))?;
+    Ok(output_file)
 }
-
 
 fn main() -> Result<()>{
     let args: Cli = cli::Cli::parse();
-
-    // create user scripts directory if it doesn't exist
-    let scripts_dir: std::path::PathBuf = XDG_DIRS.get_config_home().join("scripts");
-    std::fs::create_dir_all(&scripts_dir).wrap_err_with(|| {
-        format!(
-            "Failed to create scripts directory in config: {}",
-            scripts_dir.display()
-        )
-    })?;
-    
-    // load scripts
-    let (mut script_map, load_script_error) = scriptmap::ScriptMap::new();
-    if let Some(error) = load_script_error {
-        eprintln!("Error loading scripts: {}", &error);
-        //TODO: do the above the correct way
-    }
-
     // read command args
-    let script_name = args.script_name.join(" ");
-    let script_name_lower = script_name.to_lowercase();
-    //if args.daemon {
-    //    start_daemon_mode();
-    //    std::process::exit(0);
-    //}
+    let mut script_name = args.script_name.join(" ");
+
+    // create main user scripts directory if it doesn't exist
+    let scripts_dir = &util::get_script_dirs()[0];
+    std::fs::create_dir_all(scripts_dir);
+    // don't fail if the create_dir_all fails, but should probably eprint! it
+    //.wrap_err_with(|| {
+    //    format!(
+    //        "Failed to create scripts directory in config: {}",
+    //        scripts_dir.display()
+    //    )
+    //})?;
+    // load scripts
+    // TODO: have ScriptMap log any errors loading the scripts
+    let mut script_map = ScriptMap::new();
+
+    /* op_mode: --list-scripts */
     if args.list_scripts {
         for (name, _) in script_map.0.iter() {
             println!("{}", name);
         }
         std::process::exit(0);
     }
-    // if we've filtered for flags like --list-scripts, script_name won't be empty here
-    // because Clap is configured with ArgRequiredElseHelp
-    let _match;
+
+    /* op_mode: --rpc */
+    if args.rpc {
+        eprintln!("Error: RPC mode not implemented yet");
+        std::process::exit(1);
+        //Daemon::new(script_map).run();
+    }
+
+    /* op_mode: <SCRIPT_NAME> */
     let matches: Vec<(&String, &script::Script)> = script_map.0.iter()
-            .filter(|(name, _)| name.to_lowercase().starts_with(&script_name_lower))
+            .filter(|(name, _)| name.to_lowercase().starts_with(&script_name.to_lowercase()))
             .collect();
     if matches.len() != 1 {
-        // can't run a script here, so output the input and then print an error message
-        std::io::copy(&mut std::io::stdin(), &mut std::io::stdout());
+        // can't find the script. Output the input and then eprint an error message
+        _ = std::io::copy(&mut std::io::stdin(), &mut std::io::stdout());
         if matches.len() == 0 {
             eprintln!("No scripts found with name: {}", script_name);
         } else if matches.len() > 1 {
-            // can't pick a script, so output the input and then print options to stderr
             eprintln!("Can't autocomplete script name. Did you mean one of the following?");
             for (name, _) in matches {
                 eprintln!("\t{}", name);
@@ -82,37 +91,80 @@ fn main() -> Result<()>{
         }
         std::process::exit(1);
     }
-    _match = matches[0].0.clone();
-    drop(matches);
-    
-    let s = script_map.0.get_mut(&_match).unwrap();
+    script_name = matches[0].0.clone();
+    let script = script_map.0.get_mut(&script_name).unwrap();
     let input = std::io::read_to_string(std::io::stdin())?;
-    let execution_status: executor::ExecutionStatus = match s.execute(&input, None) {
+    let execution_status = match script.execute(&input, None) {
         Err(_) => {
-            std::io::copy(&mut std::io::stdin(), &mut std::io::stdout());
-            eprintln!("Failed to execute script: {}", "[placeholder]");
+            _ = std::io::copy(&mut std::io::stdin(), &mut std::io::stdout());
+            eprintln!("Failed to execute script: {}", script_name);
             std::process::exit(1)
         },
         Ok(status) => status,
     };
-    let replacement = execution_status.into_replacement();
-    let output = match replacement {
-        // the script did nothing?? output the input I guess
-        executor::TextReplacement::None => {
-            std::io::copy(&mut std::io::stdin(), &mut std::io::stdout());
-            std::process::exit(1)
+
+    // read results
+    // try to open error output file if specified
+    let error_file = match args.error_file {
+        None => None,
+        Some(path) => {
+            match open_output_file(path.clone()) {
+                Err(_) => {
+                    eprintln!("ERROR: Failed to open --error-file {}", path);
+                    None
+                },
+                Ok(file) => Some(file),
+            }
         }
-        // These shouldn't happen
-        executor::TextReplacement::Selection(str) => {
-            eprintln!("Warning!! ExecutionStatus.into_replacement returned Selection, when Full was expected");
-            str
-        },
-        executor::TextReplacement::Insert(str_vec) => {
-            eprintln!("Warning!! ExecutionStatus.into_replacement returned Selection, when Full was expected");
-            str_vec.join("\n")
-        }
-        executor::TextReplacement::Full(str) => str,
     };
-    print!("{}", output);
-    std::process::exit(0);
+    // write error to file if possible, otherwise to stderr
+    if let Some(error) = execution_status.error() {
+        match error_file {
+            Some(mut file) => _ = file.write_all(error.as_bytes()),
+            None => eprintln!("{}", error),
+        }
+    }
+    // try to open the info output file if specified
+    let info_file = match args.info_file {
+        None => None,
+        Some(path) => {
+            match open_output_file(path.clone()) {
+                Err(_) => {
+                    eprintln!("ERROR: Failed to open --info-file {}", path);
+                    None
+                },
+                Ok(file) => Some(file),
+            }
+        }
+    };
+    // write info to file if possible, and to stdout per the -i flag
+    if let Some(info) = execution_status.info() {
+        match info_file {
+            Some(mut file) => _ = file.write_all(info.as_bytes()),
+            None => if args.print_info {
+                println!("{}", info)
+            },
+        }
+    }
+    // if the -i flag wasn't specified, print the transformed text
+    if !args.print_info {
+        let replacement = execution_status.into_replacement();
+        let output = match replacement {
+            // Full is what I'd expect
+            TextReplacement::Full(str) => str,
+            // None would mean the script did not modify the text
+            TextReplacement::None => input,
+            // I'm not sure about these
+            TextReplacement::Selection(str) => {
+                eprintln!("Warning!! ExecutionStatus.into_replacement returned Selection, when Full was expected");
+                str
+            },
+            TextReplacement::Insert(str_vec) => {
+                eprintln!("Warning!! ExecutionStatus.into_replacement returned Selection, when Full was expected");
+                str_vec.join("\n")
+            },
+        };
+        print!("{}", output);
+    }
+    Ok(())
 }
