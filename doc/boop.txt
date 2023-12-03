@@ -1,0 +1,4 @@
+Options
+-------
+g:Boop_use_floating = 0
+g:Boop_use_palette = 0

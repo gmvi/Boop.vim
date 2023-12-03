@@ -1,3 +1,4 @@
+# Bash completion for boop. Doesn't work very well.
 _boop() {
     (( COMP_CWORD > 1 )) && return
     COMPREPLY=()

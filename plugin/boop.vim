@@ -1,14 +1,28 @@
+""" User Settings
+if !exists('g:Boop_use_floating')
+    let g:Boop_use_floating = 1
+endif
+"if !exists('g:Boop_use_palette')
+"    let g:Boop_use_palette = 1
+"endif
+if !exists('g:Boop_default_mappings')
+    let g:Boop_default_mappings = 1
+endif
+
+""" Select Implementation Details
 "if has('nvim-0.6') || has('job')
 "    let s:boop_engine_interface = 'job'
 "else
 "    let s:boop_engine_interface = 'system'
 "endif
-if has('nvim-0.5')
+if has('nvim-0.5') && g:Boop_use_floating
     let s:boop_pad_ui = 'floating'
 else
     let s:boop_pad_ui = 'scratch'
 endif
-"if has('nvim-0.5')
+"if !g:Boop_use_pallette
+"    let s:boop_palette = 'none'
+"elseif has('nvim-0.5')
 "    let s:boop_palette = 'floating'
 "elseif v:version >= 802
 "    let s:boop_palette = 'popup'
@@ -21,10 +35,9 @@ let s:boop_engine_interface = 'system'
 "let s:boop_pad_ui = 'floating'
 let s:boop_palette = 'none'
 
-""" The boop pad
-let g:Boop = {
-    \ 'default_mappings': 1,
-\}
+
+
+""" The Boop Pad
 if s:boop_engine_interface == 'system'
     let s:boop_info_file = tempname()
     let s:boop_error_file = tempname()
@@ -62,7 +75,7 @@ fun! s:BoopPad(mods) abort
     file \[Boop]
     setlocal nobuflisted buftype=nofile bufhidden=hide noswapfile
     setlocal filetype=boop
-    if g:Boop.default_mappings
+    if g:Boop_default_mappings
         nnoremap <buffer> <c-b> :BoopBuffer<space>
         xnoremap <buffer> <c-b> :Boop<space>
     endif
@@ -94,9 +107,9 @@ fun! s:BoopPadSelection(mods) abort
     " remember the user's old register contents
     let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "normal" "gv\""..s:boop_reg.."y"
+        silent exec "normal!" "gv\""..s:boop_reg.."y"
         BoopPad
-        exec "normal" "ggVG\""..s:boop_reg.."p"
+        exec "normal!" "ggVG\""..s:boop_reg.."p"
     endtry
     call setreg(s:boop_reg, l:reg_old)
 endfun
@@ -164,7 +177,7 @@ fun! s:BoopBuffer(args) abort
     try
         silent exec "%yank" s:boop_reg
         call s:DoBoop(a:args)
-        silent exec "normal" "gg\"_dG\""..s:boop_reg.."P"
+        silent exec "normal!" "gg\"_dG\""..s:boop_reg.."P"
     endtry
     call setreg(s:boop_reg, l:reg_old)
 endfun
@@ -178,7 +191,7 @@ function! s:BoopLine(args) abort
     try
         silent exec "yank" s:boop_reg
         call s:DoBoop(a:args)
-        " do a `substitute` instead of some normal dd/P command, cause it
+        " do a `substitute` instead of some normal! dd/P command, cause it
         " wasn't working for me.
         let l:search_reg = getreg('/')
         silent exec "substitute" "/.*/\\=@"..s:boop_reg.."/"
@@ -195,9 +208,9 @@ function! s:BoopSelection(args) abort
     " remember the user's old register contents
     let l:reg_old = getreg(s:boop_reg)
     try
-        silent exec "normal" "gv\""..s:boop_reg.."y"
+        silent exec "normal!" "gv\""..s:boop_reg.."y"
         call s:DoBoop(script)
-        silent exec "normal" "gv\""..s:boop_reg.."p"
+        silent exec "normal!" "gv\""..s:boop_reg.."p"
     endtry
     call setreg(s:boop_reg, l:reg_old)
 endfunction
